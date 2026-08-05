@@ -1,0 +1,9 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: activity-log-service
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/activity_log}

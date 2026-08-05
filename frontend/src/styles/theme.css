@@ -1,0 +1,73 @@
+:root {
+  /* --- Palette: "control room" — near-black panels, phosphor amber for
+     active work, cool cyan for completion, muted slate for structure. --- */
+  --bg: #0a0d12;
+  --panel: #12161d;
+  --panel-raised: #171c24;
+  --border: #232a34;
+  --border-strong: #313a47;
+
+  --text: #e7ebf0;
+  --text-muted: #8993a3;
+  --text-faint: #5b6472;
+
+  --amber: #f0a83c;
+  --amber-dim: #6b5527;
+  --cyan: #4fd8c4;
+  --cyan-dim: #2a5f57;
+  --red: #e5626b;
+  --red-dim: #5a2e33;
+  --violet: #9b8cf2;
+  --violet-dim: #443c68;
+
+  --font-display: 'IBM Plex Sans', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+
+  --radius: 3px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  background-image:
+    radial-gradient(circle at 15% 0%, rgba(240, 168, 60, 0.05), transparent 40%),
+    radial-gradient(circle at 85% 100%, rgba(79, 216, 196, 0.04), transparent 40%);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--amber-dim);
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.mono {
+  font-family: var(--font-mono);
+}

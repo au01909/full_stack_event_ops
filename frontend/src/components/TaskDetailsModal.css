@@ -1,0 +1,75 @@
+.details-panel {
+  max-width: 560px;
+}
+
+.details-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.details-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.details-title-row h3 {
+  margin: 0;
+  font-size: 15px;
+  font-family: var(--font-display);
+}
+
+.details-badges {
+  display: flex;
+  gap: 8px;
+}
+
+.details-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.details-grid dt,
+.details-block dt,
+.details-error dt {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 3px;
+}
+
+.details-grid dd {
+  margin: 0;
+  font-size: 13px;
+}
+
+.details-block pre,
+.details-error pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.details-error pre {
+  color: var(--red);
+  border-color: var(--red-dim);
+  background: rgba(229, 98, 107, 0.06);
+}

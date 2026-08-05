@@ -1,0 +1,26 @@
+.filters-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px 0;
+}
+
+.filters-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.filters-group select {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.filters-count {
+  font-size: 12px;
+  color: var(--text-faint);
+}

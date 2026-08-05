@@ -1,0 +1,81 @@
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(220px, 1.4fr);
+  gap: 12px;
+  padding: 20px 28px 0;
+}
+
+@media (max-width: 900px) {
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.stat-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stat-amber .stat-value { color: var(--amber); }
+.stat-cyan .stat-value { color: var(--cyan); }
+.stat-red .stat-value { color: var(--red); }
+.stat-neutral .stat-value { color: var(--text); }
+
+.stat-pool {
+  border-color: var(--border-strong);
+  background: var(--panel-raised);
+}
+
+.stat-pool-count {
+  color: var(--text);
+  margin-left: 6px;
+}
+
+.pool-strip {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pool-slot {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+
+.pool-slot-busy {
+  background: var(--amber);
+  border-color: var(--amber);
+  box-shadow: 0 0 6px rgba(240, 168, 60, 0.5);
+  animation: flicker 1.8s ease-in-out infinite;
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.stat-queue {
+  font-size: 11px;
+  color: var(--text-faint);
+}

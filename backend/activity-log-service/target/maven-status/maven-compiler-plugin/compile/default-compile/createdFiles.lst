@@ -1,0 +1,5 @@
+com/taskmanager/activitylog/controller/TaskEventController.class
+com/taskmanager/activitylog/repository/TaskEventRepository.class
+com/taskmanager/activitylog/ActivityLogApplication.class
+com/taskmanager/activitylog/model/TaskEvent.class
+com/taskmanager/activitylog/dto/TaskEventRequest.class
