@@ -58,8 +58,8 @@ public class TaskExecutionService {
         return taskExecutionPool.getActiveCount();
     }
 
-    public int getMaxPoolSize() {
-        return taskExecutionPool.getMaxPoolSize();
+    public int getConfiguredWorkerCount() {
+        return taskExecutionPool.getCorePoolSize();
     }
 
     public int getQueuedTaskCount() {

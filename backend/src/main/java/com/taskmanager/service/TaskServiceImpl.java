@@ -113,7 +113,7 @@ public class TaskServiceImpl implements TaskService {
                 .failed(failed)
                 .cancelled(cancelled)
                 .activeWorkerThreads(taskExecutionService.getActiveWorkerCount())
-                .maxWorkerThreads(taskExecutionService.getMaxPoolSize())
+                .maxWorkerThreads(taskExecutionService.getConfiguredWorkerCount())
                 .queuedTasks(taskExecutionService.getQueuedTaskCount())
                 .build();
     }
