@@ -274,7 +274,7 @@ What's covered:
 - **Cancellation tests** — asserts `Future#cancel(true)` actually interrupts a sleeping worker and the task ends up `CANCELLED`, never `COMPLETED`.
 - **Repository/integration tests** (`TaskRepositoryIntegrationTest`, Testcontainers + real PostgreSQL) — verifies the Flyway migration, JPA mappings, filtering queries, and that the `version` column increments on update.
 
-> Both backend modules (`backend` and `backend/activity-log-service`) have been verified to compile cleanly with `mvn compile`. `mvn test`/`docker compose up --build` have **not** been run in this environment — run them yourself before treating this as verified.
+> `mvn test` (backend module) has been run and passes in full, including the Testcontainers-backed integration test (20/20, with Docker Desktop running). `docker compose up --build` has **not** been run in this environment — run it yourself before treating that path as verified.
 >
 > **Known local-machine issue:** if you're on JDK 25 (very new as of writing), Lombok's annotation processor bundled with Spring Boot 3.2.5 fails silently — you'll see errors like `cannot find symbol: method getStatus()` on `Task`, even though nothing is wrong with the code. This is a JDK/Lombok compatibility issue, not a bug in this project. Fix: build/run with JDK 17–21 (e.g. `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn compile`), or bump the Lombok version in `backend/pom.xml` if you're set on JDK 25.
 
@@ -353,9 +353,9 @@ _Add screenshots here once you've run the app locally — e.g. the dashboard wit
 
 ## Notes on what to verify before treating this as production-ready
 
-`mvn compile` has been verified for both backend modules (see the JDK note in section 10). The following have **not** been run in this environment and should be verified by you:
+`mvn test` (backend module, including the Testcontainers integration test) has been verified — see the JDK note in section 10. The following have **not** been run in this environment and should be verified by you:
 
-1. Run `mvn clean verify` in `backend/` and `backend/activity-log-service/` and fix any dependency-version mismatches.
+1. Run `mvn clean verify` in `backend/activity-log-service/` and fix any dependency-version mismatches.
 2. Run `npm install && npm run build` in `frontend/`.
 3. Run `docker compose up --build` from the repo root and confirm all five health checks go green.
 4. Fire the concurrent-load example in section 11 and confirm the worker-pool visualization reflects real parallelism, and that `GET http://localhost:8081/api/events/task/{id}` shows the recorded lifecycle events for a task you ran.
