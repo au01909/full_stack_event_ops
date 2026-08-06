@@ -87,7 +87,7 @@ class TaskServiceImplTest {
 
         taskService.executeTask(1L);
 
-        verify(taskExecutionService).submit(1L, "REPORT", 5);
+        verify(taskExecutionService).submit(1L, "REPORT", 5, TaskPriority.HIGH);
     }
 
     @Test
@@ -126,7 +126,7 @@ class TaskServiceImplTest {
     @Test
     void retryTask_delegatesToStateServiceThenResubmits() {
         Task failed = Task.builder().id(1L).type("REPORT").status(TaskStatus.FAILED).inputDurationSeconds(5).build();
-        Task reset = Task.builder().id(1L).type("REPORT").status(TaskStatus.PENDING).inputDurationSeconds(5).build();
+        Task reset = Task.builder().id(1L).type("REPORT").status(TaskStatus.PENDING).inputDurationSeconds(5).priority(TaskPriority.HIGH).build();
         when(taskRepository.findById(1L)).thenReturn(Optional.of(failed));
         when(taskStateService.resetForRetry(1L)).thenReturn(reset);
         when(taskMapper.toResponse(reset)).thenReturn(
@@ -134,7 +134,7 @@ class TaskServiceImplTest {
 
         TaskResponse response = taskService.retryTask(1L);
 
-        verify(taskExecutionService).submit(1L, "REPORT", 5);
+        verify(taskExecutionService).submit(1L, "REPORT", 5, TaskPriority.HIGH);
         assertThat(response.getStatus()).isEqualTo(TaskStatus.PENDING);
     }
 

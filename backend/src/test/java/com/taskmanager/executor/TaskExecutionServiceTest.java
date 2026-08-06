@@ -1,6 +1,7 @@
 package com.taskmanager.executor;
 
 import com.taskmanager.entity.Task;
+import com.taskmanager.entity.TaskPriority;
 import com.taskmanager.entity.TaskStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.List;
 import java.util.Set;
@@ -25,10 +25,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * Exercises the real {@link ThreadPoolTaskExecutor} (not a mock) so these
+ * Exercises the real {@link PriorityThreadPoolExecutor} (not a mock) so these
  * tests actually prove tasks run on separate threads at the same time, that
- * cancellation interrupts a running worker, and that a failing task is
- * reported as FAILED rather than crashing the pool.
+ * cancellation interrupts a running worker, that a failing task is reported
+ * as FAILED rather than crashing the pool, and that higher-priority tasks
+ * jump the queue ahead of lower-priority ones.
  */
 @ExtendWith(MockitoExtension.class)
 class TaskExecutionServiceTest {
@@ -36,17 +37,15 @@ class TaskExecutionServiceTest {
     @Mock
     private TaskStateService taskStateService;
 
-    private ThreadPoolTaskExecutor executor;
+    private PriorityThreadPoolExecutor executor;
     private TaskExecutionService taskExecutionService;
 
     @BeforeEach
     void setUp() {
-        executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(20);
-        executor.setThreadNamePrefix("test-worker-");
-        executor.initialize();
+        AtomicInteger threadCount = new AtomicInteger(1);
+        executor = new PriorityThreadPoolExecutor(4, 4, 30, 20,
+                r -> new Thread(r, "test-worker-" + threadCount.getAndIncrement()),
+                (r, e) -> { throw new java.util.concurrent.RejectedExecutionException(); });
         taskExecutionService = new TaskExecutionService(executor, taskStateService);
     }
 
@@ -81,7 +80,7 @@ class TaskExecutionServiceTest {
         }).when(taskStateService).markCompleted(anyLong(), anyLong());
 
         for (long i = 1; i <= taskCount; i++) {
-            taskExecutionService.submit(i, "DEMO", 1);
+            taskExecutionService.submit(i, "DEMO", 1, TaskPriority.MEDIUM);
         }
 
         boolean started = allStarted.await(3, TimeUnit.SECONDS);
@@ -104,7 +103,7 @@ class TaskExecutionServiceTest {
             return null;
         }).when(taskStateService).markFailed(eq(1L), any(), anyLong());
 
-        taskExecutionService.submit(1L, "FAIL_TEST", 1);
+        taskExecutionService.submit(1L, "FAIL_TEST", 1, TaskPriority.MEDIUM);
 
         assertThat(failedLatch.await(5, TimeUnit.SECONDS)).isTrue();
         verify(taskStateService).markFailed(eq(1L), any(), anyLong());
@@ -119,7 +118,7 @@ class TaskExecutionServiceTest {
             return null;
         }).when(taskStateService).markCompleted(eq(2L), anyLong());
 
-        taskExecutionService.submit(2L, "DEMO", 1);
+        taskExecutionService.submit(2L, "DEMO", 1, TaskPriority.MEDIUM);
         assertThat(completedLatch.await(5, TimeUnit.SECONDS)).isTrue();
     }
 
@@ -131,7 +130,7 @@ class TaskExecutionServiceTest {
             return Task.builder().id(1L).status(TaskStatus.RUNNING).build();
         });
 
-        taskExecutionService.submit(1L, "DEMO", 30); // long-running job
+        taskExecutionService.submit(1L, "DEMO", 30, TaskPriority.MEDIUM); // long-running job
         assertThat(running.await(3, TimeUnit.SECONDS)).isTrue();
 
         taskExecutionService.cancel(1L);
@@ -139,5 +138,43 @@ class TaskExecutionServiceTest {
         verify(taskStateService, timeout(2000)).markCancelled(1L);
         // Because the worker was interrupted mid-sleep, it must never report success.
         verify(taskStateService, never()).markCompleted(eq(1L), anyLong());
+    }
+
+    @Test
+    void queuedTasks_runInPriorityOrderNotSubmissionOrder() throws InterruptedException {
+        // Occupy every worker thread so subsequent submissions pile up in the queue
+        // instead of starting immediately, letting priority order actually matter.
+        CountDownLatch blockersRunning = new CountDownLatch(4);
+        CountDownLatch releaseBlockers = new CountDownLatch(1);
+        when(taskStateService.markRunning(longThat(id -> id <= 4))).thenAnswer(inv -> {
+            blockersRunning.countDown();
+            releaseBlockers.await(5, TimeUnit.SECONDS);
+            return Task.builder().id(inv.getArgument(0)).status(TaskStatus.RUNNING).build();
+        });
+        for (long i = 1; i <= 4; i++) {
+            taskExecutionService.submit(i, "DEMO", 1, TaskPriority.MEDIUM);
+        }
+        assertThat(blockersRunning.await(3, TimeUnit.SECONDS)).isTrue();
+
+        List<Long> runOrder = new CopyOnWriteArrayList<>();
+        when(taskStateService.markRunning(longThat(id -> id > 4))).thenAnswer(inv -> {
+            runOrder.add(inv.getArgument(0));
+            return Task.builder().id(inv.getArgument(0)).status(TaskStatus.RUNNING).build();
+        });
+        CountDownLatch allFinished = new CountDownLatch(3);
+        doAnswer(inv -> {
+            allFinished.countDown();
+            return null;
+        }).when(taskStateService).markCompleted(longThat(id -> id > 4), anyLong());
+
+        taskExecutionService.submit(5L, "DEMO", 0, TaskPriority.LOW);
+        taskExecutionService.submit(6L, "DEMO", 0, TaskPriority.CRITICAL);
+        taskExecutionService.submit(7L, "DEMO", 0, TaskPriority.HIGH);
+
+        releaseBlockers.countDown();
+
+        assertThat(allFinished.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(runOrder).as("higher priority tasks should run before lower priority ones queued after workers freed up")
+                .containsExactly(6L, 7L, 5L);
     }
 }

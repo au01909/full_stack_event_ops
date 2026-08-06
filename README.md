@@ -16,7 +16,7 @@ Users create tasks (name, type, priority, optional simulated duration), then exe
 
 Key things this project is meant to demonstrate:
 
-- A managed, bounded `ThreadPoolTaskExecutor` — no ad hoc thread creation.
+- A managed, bounded, **priority-aware** thread pool — no ad hoc thread creation.
 - Safe concurrent state transitions using pessimistic row locks + optimistic version checks, so a cancel request and a finishing worker thread can never corrupt a task's status.
 - A thin-controller / fat-service layered backend with DTOs, centralized exception handling, and Flyway-managed schema.
 - Concurrency-focused tests that actually exercise multiple real threads rather than only asserting on mocks.
@@ -30,7 +30,7 @@ flowchart TD
     A[React Frontend<br/>Vite + TypeScript] -->|HTTPS/REST JSON| B[REST API<br/>/api/tasks]
     B --> C[Spring Boot Controllers<br/>TaskController]
     C --> D[Service Layer<br/>TaskServiceImpl]
-    D --> E[Concurrent Task Executor<br/>ThreadPoolTaskExecutor + TaskStateService]
+    D --> E[Concurrent Task Executor<br/>PriorityThreadPoolExecutor + TaskStateService]
     E --> F[Repository Layer<br/>Spring Data JPA]
     F --> G[(PostgreSQL)]
     E -->|fire-and-forget REST| H[activity-log-service<br/>microservice, :8081]
@@ -44,7 +44,7 @@ Request flow for "execute a task":
 
 1. `TaskController` validates the path variable and delegates to `TaskServiceImpl`.
 2. `TaskServiceImpl` checks the task is `PENDING`, then hands off to `TaskExecutionService.submit(...)`.
-3. `TaskExecutionService` submits a `Runnable` to the shared `taskExecutionPool` bean and tracks the returned `Future` (for cancellation).
+3. `TaskExecutionService` wraps the work as a `PrioritizedRunnable` (carrying the task's `TaskPriority`) and submits it to the shared `taskExecutionPool` bean, tracking the returned `Future` (for cancellation).
 4. The worker thread calls `TaskStateService.markRunning(...)`, which locks the row (`SELECT ... FOR UPDATE`), flips status to `RUNNING`, and commits in its own short transaction.
 5. The worker "does the work" (simulated), then calls `markCompleted(...)` or `markFailed(...)` — again under a row lock, and only if the task hasn't already been cancelled out from under it.
 6. Each of these transitions also calls `ActivityLogClient.record(...)`, which POSTs a lifecycle event (`STARTED`/`COMPLETED`/`FAILED`/`CANCELLED`) to the standalone `activity-log-service`, which persists it as a schemaless document in MongoDB. This call is best-effort — any failure is logged and swallowed, never propagated back into the task's own transaction.
@@ -78,7 +78,7 @@ task-platform/
 │   ├── src/main/java/com/taskmanager/
 │   │   ├── controller/      TaskController
 │   │   ├── service/         TaskService, TaskServiceImpl
-│   │   ├── executor/        TaskExecutionService, TaskStateService (the concurrency core)
+│   │   ├── executor/        TaskExecutionService, TaskStateService, PriorityThreadPoolExecutor (the concurrency core)
 │   │   ├── repository/      TaskRepository
 │   │   ├── entity/          Task, TaskStatus, TaskPriority
 │   │   ├── dto/              TaskCreateRequest, TaskResponse, TaskStatsResponse, ErrorResponse
@@ -167,7 +167,8 @@ All errors share one JSON shape (`GlobalExceptionHandler`):
 
 ## 7. Concurrent execution design
 
-- **Single managed pool.** `ThreadPoolConfig` defines the one and only `ThreadPoolTaskExecutor` bean (`taskExecutionPool`). Core size, max size, queue capacity, keep-alive, and thread name prefix are all environment-configurable (see `task.executor.*` in `application.yml`, driven by `TASK_EXECUTOR_*` env vars). Controllers never spawn threads; they call into `TaskExecutionService`.
+- **Single managed pool.** `ThreadPoolConfig` defines the one and only executor bean (`taskExecutionPool`), a `PriorityThreadPoolExecutor` (`backend/src/main/java/com/taskmanager/executor/PriorityThreadPoolExecutor.java`). Core size, max size, queue capacity, keep-alive, and thread name prefix are all environment-configurable (see `task.executor.*` in `application.yml`, driven by `TASK_EXECUTOR_*` env vars). Controllers never spawn threads; they call into `TaskExecutionService`.
+- **Priority-based scheduling.** The pool's queue is a capacity-bounded `PriorityBlockingQueue` instead of a plain FIFO queue. Each submitted task is wrapped in a `Comparable` future carrying its `TaskPriority` (`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`) and a monotonic submission sequence number. When a worker frees up, it always dequeues the highest-priority waiting task; ties (same priority) are broken FIFO by submission order. Note this only affects tasks that actually have to wait — if a worker is idle at submission time, `ThreadPoolExecutor` hands it the new task directly rather than queuing it, so priority only matters once the pool is saturated. There's no aging/starvation prevention: under sustained high-priority load, a `LOW` task can wait indefinitely.
 - **Backpressure, not silent drops.** The rejection policy is a custom handler that throws `TaskQueueFullException`, surfaced to the API as `503 Service Unavailable`, instead of Java's default `CallerRunsPolicy` (which would block the HTTP thread) or `DiscardPolicy` (which would silently lose work).
 - **Cancellation.** `TaskExecutionService` keeps a `ConcurrentHashMap<Long, Future<?>>` of in-flight work. `cancel()` calls `Future#cancel(true)` to interrupt the worker mid-`sleep`/mid-work, then unconditionally calls `TaskStateService.markCancelled(...)`, which re-checks the task's current DB state under a row lock — so cancelling a task that has *just* finished is safely rejected with a 409 rather than corrupting a `COMPLETED` task into `CANCELLED`.
 - **Safe state transitions.** Every transition (`markRunning`, `markCompleted`, `markFailed`, `markCancelled`, `resetForRetry`) lives in `TaskStateService`, each in its own `REQUIRES_NEW` transaction guarded by `SELECT ... FOR UPDATE` (`TaskRepository.findByIdForUpdate`). A worker thread finishing a task and a user's cancel request racing each other resolve deterministically: whichever acquires the row lock first wins, and the loser's transition is a no-op guarded by an explicit status check (e.g. `markCompleted` skips itself if the row is no longer `RUNNING`).
@@ -229,7 +230,16 @@ Open `http://localhost:80` once all containers report healthy (`docker compose p
 
 No credentials are hardcoded in source: the database name/user/password, CORS origins, thread pool sizing, and the activity-log URL all come from environment variables (see `.env.example`).
 
-## 9a. Deploying to AWS
+## 9a. Public deployment
+
+_Instance is currently **stopped**. When it's running, list the live URL(s) here — e.g._
+
+- Frontend: `http://<ec2-public-ip-or-dns>`
+- Backend API: `http://<ec2-public-ip-or-dns>:8080/api/tasks`
+
+Note: unless an Elastic IP is attached, stopping/starting the EC2 instance assigns a new public IP, so this will need updating after every restart.
+
+## 9b. Deploying to AWS
 
 `deploy/aws-ec2-deploy.sh` rsyncs this repo to an EC2 instance you provision and runs `docker compose up --build -d` there — the cheapest legitimate way to run the whole stack on AWS without standing up ECS/EKS.
 
@@ -259,7 +269,7 @@ What's covered:
 
 - **Controller tests** (`TaskControllerTest`, `@WebMvcTest`) — request validation, status codes, and the centralized error shape, with the service layer mocked.
 - **Service unit tests** (`TaskServiceImplTest`, Mockito) — state-transition guards (can't execute a `RUNNING` task, can't delete a `RUNNING` task, retry only from `FAILED`), 404 handling.
-- **Concurrent execution tests** (`TaskExecutionServiceTest`) — run against a *real* `ThreadPoolTaskExecutor`, using `CountDownLatch`es to prove multiple tasks are genuinely running on distinct threads at the same time, not queued one-after-another.
+- **Concurrent execution tests** (`TaskExecutionServiceTest`) — run against a *real* `PriorityThreadPoolExecutor`, using `CountDownLatch`es to prove multiple tasks are genuinely running on distinct threads at the same time (not queued one-after-another), and that queued higher-priority tasks are dequeued ahead of lower-priority ones once workers saturate.
 - **Failure handling tests** — a task type of `FAIL_TEST` deterministically throws inside the worker; asserts it's reported `FAILED` (never `COMPLETED`) and that the pool keeps accepting new work afterward.
 - **Cancellation tests** — asserts `Future#cancel(true)` actually interrupts a sleeping worker and the task ends up `CANCELLED`, never `COMPLETED`.
 - **Repository/integration tests** (`TaskRepositoryIntegrationTest`, Testcontainers + real PostgreSQL) — verifies the Flyway migration, JPA mappings, filtering queries, and that the `version` column increments on update.

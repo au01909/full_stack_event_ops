@@ -67,7 +67,7 @@ public class TaskServiceImpl implements TaskService {
         // Submit to the executor; the actual PENDING -> RUNNING transition is
         // persisted by the worker thread itself once it is picked up, so the
         // status returned here may still read PENDING briefly.
-        taskExecutionService.submit(task.getId(), task.getType(), task.getInputDurationSeconds());
+        taskExecutionService.submit(task.getId(), task.getType(), task.getInputDurationSeconds(), task.getPriority());
         return taskMapper.toResponse(task);
     }
 
@@ -82,7 +82,7 @@ public class TaskServiceImpl implements TaskService {
     public TaskResponse retryTask(Long id) {
         findOrThrow(id); // 404s early with a clear message
         Task reset = taskStateService.resetForRetry(id);
-        taskExecutionService.submit(reset.getId(), reset.getType(), reset.getInputDurationSeconds());
+        taskExecutionService.submit(reset.getId(), reset.getType(), reset.getInputDurationSeconds(), reset.getPriority());
         return taskMapper.toResponse(reset);
     }
 

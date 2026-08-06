@@ -1,10 +1,10 @@
 package com.taskmanager.executor;
 
 import com.taskmanager.entity.Task;
+import com.taskmanager.entity.TaskPriority;
 import com.taskmanager.exception.InvalidTaskStateException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -22,19 +22,33 @@ import java.util.concurrent.Future;
 @Slf4j
 public class TaskExecutionService {
 
-    private final ThreadPoolTaskExecutor taskExecutionPool;
+    private final PriorityThreadPoolExecutor taskExecutionPool;
     private final TaskStateService taskStateService;
 
     /** taskId -> in-flight Future, so cancel() can interrupt the worker thread. */
     private final Map<Long, Future<?>> inFlight = new ConcurrentHashMap<>();
 
     /**
-     * Submits a task for asynchronous execution. Throws
+     * Submits a task for asynchronous execution. Higher-priority tasks are
+     * dequeued ahead of lower-priority ones that are still waiting; ties are
+     * broken by submission order. Throws
      * {@link com.taskmanager.exception.TaskQueueFullException} (via the pool's
      * rejection handler) if the pool and its queue are both saturated.
      */
-    public void submit(Long taskId, String taskType, Integer durationSeconds) {
-        Future<?> future = taskExecutionPool.submit(() -> runTask(taskId, taskType, durationSeconds));
+    public void submit(Long taskId, String taskType, Integer durationSeconds, TaskPriority priority) {
+        int priorityRank = (priority == null) ? TaskPriority.LOW.ordinal() : priority.ordinal();
+        PriorityThreadPoolExecutor.PrioritizedRunnable job = new PriorityThreadPoolExecutor.PrioritizedRunnable() {
+            @Override
+            public void run() {
+                runTask(taskId, taskType, durationSeconds);
+            }
+
+            @Override
+            public int getPriority() {
+                return priorityRank;
+            }
+        };
+        Future<?> future = taskExecutionPool.submit(job);
         inFlight.put(taskId, future);
     }
 
@@ -63,7 +77,7 @@ public class TaskExecutionService {
     }
 
     public int getQueuedTaskCount() {
-        return taskExecutionPool.getThreadPoolExecutor().getQueue().size();
+        return taskExecutionPool.getQueue().size();
     }
 
     private void runTask(Long taskId, String taskType, Integer durationSeconds) {

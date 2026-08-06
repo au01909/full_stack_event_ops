@@ -1,14 +1,17 @@
 package com.taskmanager.config;
 
 import com.taskmanager.exception.TaskQueueFullException;
+import com.taskmanager.executor.PriorityThreadPoolExecutor;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Defines the dedicated worker pool used to run tasks concurrently.
@@ -24,19 +27,27 @@ public class ThreadPoolConfig {
 
     private final TaskExecutorProperties properties;
 
+    private PriorityThreadPoolExecutor taskExecutionPool;
+
     @Bean(name = "taskExecutionPool")
-    public ThreadPoolTaskExecutor taskExecutionPool() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(properties.getCorePoolSize());
-        executor.setMaxPoolSize(properties.getMaxPoolSize());
-        executor.setQueueCapacity(properties.getQueueCapacity());
-        executor.setKeepAliveSeconds(properties.getKeepAliveSeconds());
-        executor.setThreadNamePrefix(properties.getThreadNamePrefix());
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds(20);
-        executor.setRejectedExecutionHandler(rejectionHandler());
-        executor.initialize();
-        return executor;
+    public PriorityThreadPoolExecutor taskExecutionPool() {
+        AtomicInteger threadCount = new AtomicInteger(1);
+        taskExecutionPool = new PriorityThreadPoolExecutor(
+                properties.getCorePoolSize(),
+                properties.getMaxPoolSize(),
+                properties.getKeepAliveSeconds(),
+                properties.getQueueCapacity(),
+                r -> new Thread(r, properties.getThreadNamePrefix() + threadCount.getAndIncrement()),
+                rejectionHandler());
+        return taskExecutionPool;
+    }
+
+    @PreDestroy
+    public void shutdown() throws InterruptedException {
+        if (taskExecutionPool != null) {
+            taskExecutionPool.shutdown();
+            taskExecutionPool.awaitTermination(20, TimeUnit.SECONDS);
+        }
     }
 
     /**
