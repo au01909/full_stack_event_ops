@@ -384,14 +384,23 @@ With the default pool (`core=4`, `max=10`), the `stats` response's `activeWorker
 
 ## 12. Screenshots
 
-_Add screenshots here once you've run the app locally — e.g. the dashboard with several tasks `RUNNING` concurrently, the worker-pool strip lit up, and the task detail modal for a `FAILED` task._
+Captured from the live deployment.
 
-| View | Screenshot |
-|---|---|
-| Dashboard overview | _(add image)_ |
-| Concurrent execution in progress | _(add image)_ |
-| Task detail modal | _(add image)_ |
-| Create task form | _(add image)_ |
+**Dashboard overview** — summary cards, filters, and the task table.
+
+![Dashboard overview](docs/screenshots/01-dashboard-overview.png)
+
+**Concurrent execution** — four tasks `RUNNING` at the same time on separate worker threads. The worker pool shows `4/4` busy with `1 queued`: the fifth task waits until a thread frees up.
+
+![Concurrent execution in progress](docs/screenshots/02-concurrent-execution.png)
+
+**Task detail** — a `FAIL_TEST` task that failed in isolation, with its error message and a **Retry** button. Other tasks were unaffected.
+
+![Task detail modal](docs/screenshots/03-task-detail-failed.png)
+
+**Create task form**
+
+![Create task form](docs/screenshots/04-create-task-form.png)
 
 ---
 
