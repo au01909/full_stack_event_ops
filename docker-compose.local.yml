@@ -1,0 +1,14 @@
+# Local development only: publishes internal ports to your machine so you can
+# curl the API (:8080, :8081) or connect to the databases directly.
+# NOT used on EC2 - there, only Caddy (80/443) is exposed.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+services:
+  postgres:
+    ports: ["5432:5432"]
+  mongo:
+    ports: ["27017:27017"]
+  activity-log-service:
+    ports: ["8081:8081"]
+  backend:
+    ports: ["8080:8080"]

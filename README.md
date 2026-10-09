@@ -68,7 +68,7 @@ The two are independently deployable Spring Boot apps (separate `pom.xml`/`Docke
 | Backend (activity-log microservice) | Java 17, Spring Boot 3, Spring Web, Spring Data MongoDB |
 | Databases | PostgreSQL 16 (tasks), MongoDB 7 (task events) |
 | Testing | JUnit 5, Mockito, AssertJ, Testcontainers |
-| Infra | Docker, Docker Compose, nginx (serving the built frontend), AWS EC2 (deploy script) |
+| Infra | Docker, Docker Compose, nginx (serving the built frontend), Caddy (automatic HTTPS), AWS EC2 (deploy script) |
 
 ## 4. Project structure
 
@@ -110,9 +110,12 @@ task-platform/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
-├── docker-compose.yml
+├── docker-compose.yml         the full stack (only Caddy publishes ports)
+├── docker-compose.local.yml   local-only override that publishes 8080/8081/5432/27017
+├── Caddyfile                  HTTPS reverse proxy + security headers
 ├── .env.example
 ├── deploy/aws-ec2-deploy.sh   rsync + docker compose up on an EC2 box you provision
+├── DOCUMENTATION.md           plain-English guide to how everything works
 └── README.md
 ```
 
@@ -215,47 +218,86 @@ Vite's dev server proxies `/api/*` to `http://localhost:8080`, so the frontend a
 
 ```bash
 cp .env.example .env   # optional - defaults work out of the box
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
-This starts five containers on one bridge network:
+This starts six containers on one bridge network:
 
 - `postgres` — PostgreSQL 16 with a persistent named volume (`postgres_data`) and a health check.
 - `mongo` — MongoDB 7 with a persistent named volume (`mongo_data`) and a health check.
-- `activity-log-service` — Spring Boot microservice, waits for Mongo to be healthy, exposes `:8081`.
-- `backend` — Spring Boot, waits for Postgres and `activity-log-service` to be healthy, runs Flyway migrations on boot, exposes `:8080`.
-- `frontend` — nginx serving the built React app on `:80`, proxying `/api/*` to the backend container.
+- `activity-log-service` — Spring Boot microservice, waits for Mongo to be healthy.
+- `backend` — Spring Boot, waits for Postgres and `activity-log-service` to be healthy, runs Flyway migrations on boot.
+- `frontend` — nginx serving the built React app, proxying `/api/*` to the backend container.
+- `caddy` — the only container that publishes ports (80 and 443). Terminates HTTPS and forwards to `frontend`, adding security headers (see `Caddyfile`).
 
-Open `http://localhost:80` once all containers report healthy (`docker compose ps`).
+**Ports.** `docker-compose.yml` publishes only Caddy's 80/443; the databases and APIs stay on the private Docker network. `docker-compose.local.yml` additionally publishes `8080`, `8081`, `5432` and `27017` to your machine so the curl examples below and the "run without Docker" workflow work. **Don't use it on a server.**
 
-No credentials are hardcoded in source: the database name/user/password, CORS origins, thread pool sizing, and the activity-log URL all come from environment variables (see `.env.example`).
+**Opening the app locally:** with `DOMAIN` unset, Caddy serves `https://localhost` using its own local certificate — your browser will show a one-time warning you can accept. `http://localhost` redirects there.
+
+Open the site once all containers report healthy (`docker compose ps`).
+
+No credentials are hardcoded in source: the database name/user/password, `DOMAIN`, CORS origins, thread pool sizing, and the activity-log URL all come from environment variables.
 
 ## 9a. Public deployment
 
-_Instance is currently **stopped**. When it's running, list the live URL(s) here — e.g._
+Live (while the EC2 instance is running): **https://3-111-38-220.sslip.io**
 
-- Frontend: `http://<ec2-public-ip-or-dns>`
-- Backend API: `http://<ec2-public-ip-or-dns>:8080/api/tasks`
+The hostname comes from [sslip.io](https://sslip.io), a free service that maps `3-111-38-220.sslip.io` to `3.111.38.220`; Caddy gets a free Let's Encrypt certificate for it automatically.
 
-Note: unless an Elastic IP is attached, stopping/starting the EC2 instance assigns a new public IP, so this will need updating after every restart.
+Note: unless an Elastic IP is attached, **stopping and starting** the instance assigns a new public IP, which changes the hostname. A plain reboot keeps the IP. After an IP change, update `DOMAIN` and `CORS_ALLOWED_ORIGINS` in the server's `.env` (below) and redeploy.
 
 ## 9b. Deploying to AWS
 
-`deploy/aws-ec2-deploy.sh` rsyncs this repo to an EC2 instance you provision and runs `docker compose up --build -d` there — the cheapest legitimate way to run the whole stack on AWS without standing up ECS/EKS.
+`deploy/aws-ec2-deploy.sh` rsyncs this repo to an EC2 instance you provision and runs `docker compose up --build -d` there — the cheapest legitimate way to run the whole stack on AWS without standing up ECS/EKS. Full walkthrough with explanations: [DOCUMENTATION.md](DOCUMENTATION.md#10-how-it-is-deployed-on-ec2).
 
-One-time setup you do yourself (needs your AWS account, not something run from this repo):
+**One-time setup (AWS console):**
 
-1. Launch an EC2 instance (Amazon Linux 2023, `t3.small` or larger) with Docker + the Docker Compose plugin installed.
-2. Open inbound ports 22 (SSH), 80 (frontend), 8080 (backend API), 8081 (activity-log API, optional) in its security group.
-3. Have the SSH key pair for that instance on hand.
+1. Launch an EC2 instance: Amazon Linux 2023, `t3.small` or larger, 20 GB disk. Create a key pair and keep the `.pem` file.
+2. Security group inbound rules: **22 → My IP**, **80 → anywhere**, **443 → anywhere**. Do **not** open 8080, 8081, 5432 or 27017.
+3. Under *Advanced details → User data*, paste:
 
-Then, from the repo root:
+   ```bash
+   #!/bin/bash
+   dnf install -y docker rsync
+   systemctl enable --now docker
+   usermod -aG docker ec2-user
+   mkdir -p /usr/local/lib/docker/cli-plugins
+   curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+   chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+   ```
+
+4. Once it shows 2/2 status checks, install buildx (Compose needs ≥ 0.17, which Amazon Linux's Docker lacks):
+
+   ```bash
+   chmod 400 key.pem
+   ssh -i key.pem ec2-user@<public-ip> 'sudo curl -fsSL https://github.com/docker/buildx/releases/download/v0.19.3/buildx-v0.19.3.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx'
+   ```
+
+5. Create the server-only `.env` (replace the dots in the IP with dashes):
+
+   ```bash
+   ssh -i key.pem ec2-user@<public-ip> 'mkdir -p ~/task-platform && printf "DOMAIN=3-111-38-220.sslip.io\nCORS_ALLOWED_ORIGINS=https://3-111-38-220.sslip.io\n" > ~/task-platform/.env'
+   ```
+
+   `CORS_ALLOWED_ORIGINS` is required: without it, creating tasks from the browser fails with `403 Invalid CORS request`.
+
+**Deploy (every time), from the repo root:**
 
 ```bash
-./deploy/aws-ec2-deploy.sh ec2-user@<public-ip-or-dns> /path/to/key.pem
+./deploy/aws-ec2-deploy.sh ec2-user@<public-ip> /path/to/key.pem
 ```
 
-This copies the repo (minus `node_modules`/`target`/`.git`) to the instance and runs `docker compose up --build -d` remotely. Re-run it any time you want to redeploy changes.
+**Check it:**
+
+```bash
+ssh -i key.pem ec2-user@<public-ip> 'cd ~/task-platform && docker compose ps'
+curl -I https://<your-domain>                      # expect HTTP/2 200
+curl https://<your-domain>/api/tasks/stats         # expect JSON
+```
+
+**Stop billing:** EC2 console → Instances → Instance state → Terminate.
+
+**Security notes:** the app has no login — anyone with the URL can create and delete tasks. Only ports 80/443 are public. Set `DB_PASSWORD` in the server's `.env` before storing anything that matters.
 
 ## 10. Testing instructions
 
@@ -274,11 +316,13 @@ What's covered:
 - **Cancellation tests** — asserts `Future#cancel(true)` actually interrupts a sleeping worker and the task ends up `CANCELLED`, never `COMPLETED`.
 - **Repository/integration tests** (`TaskRepositoryIntegrationTest`, Testcontainers + real PostgreSQL) — verifies the Flyway migration, JPA mappings, filtering queries, and that the `version` column increments on update.
 
-> `mvn test` (backend module) has been run and passes in full, including the Testcontainers-backed integration test (20/20, with Docker Desktop running). `docker compose up --build` has **not** been run in this environment — run it yourself before treating that path as verified.
+> `mvn test` (backend module) has been run and passes in full, including the Testcontainers-backed integration test (20/20, with Docker Desktop running). `The full stack has been built and run with Docker Compose on EC2, and the UI flows (create, execute, cancel, delete) were clicked through against the live HTTPS site.
 >
 > **Known local-machine issue:** if you're on JDK 25 (very new as of writing), Lombok's annotation processor bundled with Spring Boot 3.2.5 fails silently — you'll see errors like `cannot find symbol: method getStatus()` on `Task`, even though nothing is wrong with the code. This is a JDK/Lombok compatibility issue, not a bug in this project. Fix: build/run with JDK 17–21 (e.g. `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn compile`), or bump the Lombok version in `backend/pom.xml` if you're set on JDK 25.
 
 ## 11. Example API requests
+
+> These use `localhost:8080`, which needs `docker-compose.local.yml` (see section 9). Against the deployed site, use `https://<your-domain>/api/...` instead.
 
 Create a task:
 
@@ -353,9 +397,11 @@ _Add screenshots here once you've run the app locally — e.g. the dashboard wit
 
 ## Notes on what to verify before treating this as production-ready
 
-`mvn test` (backend module, including the Testcontainers integration test) has been verified — see the JDK note in section 10. The following have **not** been run in this environment and should be verified by you:
+Verified: `mvn test` (backend, including Testcontainers); the Maven and npm production builds and `docker compose up --build` on EC2 (all six containers healthy); and the UI flows (create, execute, cancel, delete) against the live HTTPS site.
 
-1. Run `mvn clean verify` in `backend/activity-log-service/` and fix any dependency-version mismatches.
-2. Run `npm install && npm run build` in `frontend/`.
-3. Run `docker compose up --build` from the repo root and confirm all five health checks go green.
-4. Fire the concurrent-load example in section 11 and confirm the worker-pool visualization reflects real parallelism, and that `GET http://localhost:8081/api/events/task/{id}` shows the recorded lifecycle events for a task you ran.
+Not verified:
+
+1. `mvn clean verify` in `backend/activity-log-service/` (it builds, but its tests were not run).
+2. The concurrent-load example in section 11 against the deployed site, and `GET /api/events/task/{id}` on the activity-log service returning the recorded lifecycle events.
+3. The status/priority filters and the `FAIL_TEST` retry flow in the UI.
+4. Authentication — there is none (see [DOCUMENTATION.md](DOCUMENTATION.md#11-known-limitations)).

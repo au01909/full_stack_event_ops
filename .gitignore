@@ -63,3 +63,7 @@ mongo_data/
 # ---------- Temporary ----------
 *.swp
 *.swo
+# ---------- Secrets / tooling ----------
+*.pem
+*.key
+.playwright-mcp/
